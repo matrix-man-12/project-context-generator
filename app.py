@@ -38,6 +38,50 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ── Screenshot Gallery Helper ────────────────────────────────────────
+def _render_screenshot_gallery(output_dir: Path):
+    """Render a screenshot gallery from an output directory."""
+    ss_dir = output_dir / "screenshots"
+    if not ss_dir.is_dir():
+        return
+
+    images = sorted(ss_dir.glob("*.png"))
+    if not images:
+        return
+
+    st.subheader("🖼️ Screenshots")
+
+    # View mode toggle
+    view_mode = st.radio(
+        "View", ["Grid", "Slideshow"], horizontal=True, key=f"view_{output_dir}"
+    )
+
+    if view_mode == "Grid":
+        cols = st.columns(3)
+        for i, img_path in enumerate(images):
+            with cols[i % 3]:
+                st.image(
+                    str(img_path),
+                    caption=img_path.stem.replace("_", " "),
+                    use_container_width=True,
+                )
+    else:
+        # Slideshow mode — one image at a time with navigation
+        idx = st.number_input(
+            f"Image (1–{len(images)})",
+            min_value=1, max_value=len(images), value=1, step=1,
+            key=f"slide_{output_dir}",
+        )
+        img_path = images[idx - 1]
+        st.image(
+            str(img_path),
+            caption=f"{idx}/{len(images)} — {img_path.stem.replace('_', ' ')}",
+            use_container_width=True,
+        )
+
+    st.caption(f"{len(images)} screenshots in `{ss_dir}`")
+
+
 # ── Sidebar Configuration ───────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Configuration")
@@ -190,6 +234,9 @@ if st.button("🚀 Generate Portal Context", type="primary", use_container_width
             with st.expander(f"📄 {rel}"):
                 st.markdown(md_file.read_text(encoding="utf-8"))
 
+        # Show screenshots
+        _render_screenshot_gallery(out_dir)
+
         # ZIP download
         zip_buf = BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -209,6 +256,43 @@ if st.button("🚀 Generate Portal Context", type="primary", use_container_width
     except Exception as e:
         st.error(f"❌ Generation failed: {e}")
         st.exception(e)
+
+# ── Screenshot Browser (for previously generated output) ────────────
+st.divider()
+st.subheader("🖼️ Screenshot Browser")
+st.caption("Browse screenshots from any generated output folder.")
+
+browse_dir = st.text_input(
+    "Output folder path",
+    value="./output",
+    key="browse_dir",
+    placeholder="./output/portal-name",
+)
+
+if browse_dir:
+    browse_path = Path(browse_dir)
+    # Find all portal output folders that contain screenshots
+    screenshot_folders = []
+    if browse_path.is_dir():
+        for child in sorted(browse_path.iterdir()):
+            ss_dir = child / "screenshots" if child.is_dir() else None
+            if ss_dir and ss_dir.is_dir() and any(ss_dir.glob("*.png")):
+                screenshot_folders.append(child.name)
+        # Also check if the path itself has a screenshots folder
+        direct_ss = browse_path / "screenshots"
+        if direct_ss.is_dir() and any(direct_ss.glob("*.png")):
+            screenshot_folders.insert(0, "(this folder)")
+
+    if screenshot_folders:
+        selected_portal = st.selectbox("Select portal", screenshot_folders, key="ss_portal")
+        if selected_portal == "(this folder)":
+            ss_dir = browse_path / "screenshots"
+        else:
+            ss_dir = browse_path / selected_portal / "screenshots"
+
+        _render_screenshot_gallery(ss_dir.parent if ss_dir.exists() else browse_path)
+    else:
+        st.info("No screenshots found. Generate portal context first, or point to an output folder.")
 
 # ── Footer ───────────────────────────────────────────────────────────
 st.divider()
