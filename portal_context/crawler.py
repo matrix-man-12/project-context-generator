@@ -72,29 +72,63 @@ def _build_browser_config(config):
 
     kwargs = {"headless": True, "verbose": True}
 
-    if config.auth_method == "profile" and config.chrome_profile_dir:
+    if config.auth_method == "cdp" and config.cdp_url:
+        # Connect to an already-running Chrome with --remote-debugging-port
+        cdp = config.cdp_url
+        # Crawl4AI expects a WebSocket URL for CDP
+        if cdp.startswith("http://"):
+            # Convert http://localhost:9222 → ws://localhost:9222/devtools/browser/
+            # We need to fetch the actual WS endpoint from the /json/version API
+            cdp_ws = _get_cdp_websocket_url(cdp)
+            if cdp_ws:
+                cdp = cdp_ws
+            else:
+                # Fallback: construct ws URL directly
+                cdp = cdp.replace("http://", "ws://") + "/devtools/browser/"
+
+        logger.info(f"Connecting to browser via CDP: {cdp}")
+        kwargs["use_managed_browser"] = True
+        kwargs["cdp_url"] = cdp
+        kwargs["headless"] = False  # We're connecting to a visible browser
+
+    elif config.auth_method == "profile" and config.chrome_profile_dir:
         if os.path.exists(config.chrome_profile_dir):
             temp_profile = tempfile.mkdtemp(prefix="portal_ctx_")
             logger.info(f"Copying Chrome profile to: {temp_profile}")
-            essential = ["Cookies", "Login Data", "Web Data", "Local State"]
-            default_dir = os.path.join(config.chrome_profile_dir, "Default")
-            temp_default = os.path.join(temp_profile, "Default")
-            os.makedirs(temp_default, exist_ok=True)
+            # Copy the entire Default profile for cookie/session support
+            src_default = os.path.join(config.chrome_profile_dir, "Default")
+            dst_default = os.path.join(temp_profile, "Default")
+            if os.path.exists(src_default):
+                shutil.copytree(src_default, dst_default, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("Cache", "Code Cache",
+                                                               "GPUCache", "Service Worker"))
             local_state = os.path.join(config.chrome_profile_dir, "Local State")
             if os.path.exists(local_state):
                 shutil.copy2(local_state, os.path.join(temp_profile, "Local State"))
-            if os.path.exists(default_dir):
-                for fn in os.listdir(default_dir):
-                    if any(fn.startswith(e) for e in essential):
-                        src = os.path.join(default_dir, fn)
-                        dst = os.path.join(temp_default, fn)
-                        if os.path.isfile(src):
-                            shutil.copy2(src, dst)
+
             kwargs["user_data_dir"] = temp_profile
+            kwargs["use_persistent_context"] = True
         else:
             logger.warning(f"Chrome profile not found: {config.chrome_profile_dir}")
 
     return BrowserConfig(**kwargs)
+
+
+def _get_cdp_websocket_url(http_url: str) -> str | None:
+    """Fetch the actual WebSocket debugger URL from Chrome's /json/version endpoint."""
+    import urllib.request
+    import json
+    try:
+        version_url = http_url.rstrip("/") + "/json/version"
+        with urllib.request.urlopen(version_url, timeout=5) as resp:
+            data = json.loads(resp.read())
+            ws_url = data.get("webSocketDebuggerUrl", "")
+            if ws_url:
+                logger.info(f"Got CDP WebSocket URL: {ws_url}")
+                return ws_url
+    except Exception as e:
+        logger.warning(f"Could not fetch CDP WebSocket URL from {http_url}: {e}")
+    return None
 
 
 async def discover_pages(config) -> list[DiscoveredPage]:

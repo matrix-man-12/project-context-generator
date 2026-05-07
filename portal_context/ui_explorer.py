@@ -127,12 +127,14 @@ async def explore_page_ui(page_url: str, config, page_index: int = 0) -> PageExp
     Uses Crawl4AI sessions to interact with dropdowns, tabs, accordions
     and capture the resulting DOM changes.
     """
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+    from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+    from portal_context.crawler import _build_browser_config
 
     logger.info(f"Phase 2: Exploring UI on {page_url}")
     exploration = PageExploration(url=page_url)
 
-    browser_config = BrowserConfig(headless=True, verbose=False)
+    # Reuse the same browser config (with CDP/profile auth) as the crawler
+    browser_config = _build_browser_config(config)
     session_id = f"explore_{page_index}"
 
     screenshots_dir = Path(config.output_dir) / config.portal_name / "screenshots"
