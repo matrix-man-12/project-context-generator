@@ -94,17 +94,49 @@ def _build_browser_config(config):
     elif config.auth_method == "profile" and config.chrome_profile_dir:
         if os.path.exists(config.chrome_profile_dir):
             temp_profile = tempfile.mkdtemp(prefix="portal_ctx_")
-            logger.info(f"Copying Chrome profile to: {temp_profile}")
-            # Copy the entire Default profile for cookie/session support
-            src_default = os.path.join(config.chrome_profile_dir, "Default")
-            dst_default = os.path.join(temp_profile, "Default")
-            if os.path.exists(src_default):
-                shutil.copytree(src_default, dst_default, dirs_exist_ok=True,
-                                ignore=shutil.ignore_patterns("Cache", "Code Cache",
-                                                               "GPUCache", "Service Worker"))
-            local_state = os.path.join(config.chrome_profile_dir, "Local State")
-            if os.path.exists(local_state):
-                shutil.copy2(local_state, os.path.join(temp_profile, "Local State"))
+            profile_dir = config.chrome_profile_dir
+
+            # Detect if user gave a specific profile dir (e.g. "Profile 5")
+            # or the User Data root dir.
+            # If "Local State" exists at the given path, it's the User Data root.
+            # If "Local State" exists in the PARENT, user gave a specific profile.
+            local_state_here = os.path.join(profile_dir, "Local State")
+            local_state_parent = os.path.join(os.path.dirname(profile_dir), "Local State")
+
+            if os.path.exists(local_state_here):
+                # User gave User Data root — copy "Default" profile
+                user_data_dir = profile_dir
+                src_profile = os.path.join(profile_dir, "Default")
+                dst_profile = os.path.join(temp_profile, "Default")
+            elif os.path.exists(local_state_parent):
+                # User gave a specific profile dir like "Profile 5"
+                user_data_dir = os.path.dirname(profile_dir)
+                profile_name = os.path.basename(profile_dir)
+                src_profile = profile_dir
+                dst_profile = os.path.join(temp_profile, profile_name)
+                # Chromium needs to know which profile to use
+                kwargs["chrome_channel"] = profile_name
+            else:
+                # Fallback: treat whatever they gave as the profile source
+                user_data_dir = os.path.dirname(profile_dir)
+                src_profile = profile_dir
+                dst_profile = os.path.join(temp_profile, os.path.basename(profile_dir))
+
+            logger.info(f"Copying profile from: {src_profile}")
+            logger.info(f"Temp user data dir: {temp_profile}")
+
+            if os.path.exists(src_profile):
+                shutil.copytree(src_profile, dst_profile, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns(
+                                    "Cache", "Code Cache", "GPUCache",
+                                    "Service Worker", "CacheStorage",
+                                    "blob_storage", "IndexedDB"))
+
+            # Copy Local State (required by Chromium)
+            ls_src = os.path.join(user_data_dir, "Local State")
+            ls_dst = os.path.join(temp_profile, "Local State")
+            if os.path.exists(ls_src):
+                shutil.copy2(ls_src, ls_dst)
 
             kwargs["user_data_dir"] = temp_profile
             kwargs["use_persistent_context"] = True
